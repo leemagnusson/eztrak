@@ -23,7 +23,7 @@ extension = "txt";
 programNameIsInteger = false;
 setCodePage("ascii");
 
-capabilities = CAPABILITY_MILLING;
+capabilities = CAPABILITY_MILLING | CAPABILITY_TURNING;
 tolerance = spatial(0.002, MM);
 
 minimumChordLength = spatial(0.0025, MM);
@@ -110,7 +110,7 @@ var gFeedModeModal = createModal({}, gFormat); // modal group 5 // G44-45
 var gUnitModal = createModal({}, gFormat); // modal group 6 // G70-71
 var gCycleModal = createModal({}, gFormat); // modal group 9 // G81, ...
 
-var WARNING_WORK_OFFSET = 0;
+var WARNING_WORK_OFFSET = 1;
 
 // collected state
 var sequenceNumber;
@@ -403,7 +403,10 @@ function onSection() {
       getPreviousSection().isMultiAxis() && !currentSection.isMultiAxis()); // force newWorkPlane between indexing and simultaneous operations
 
   if (insertToolCall || newWorkOffset || newWorkPlane) {
-      
+    if (newWorkOffset) {
+      writeBlock(gFormat.format((54 + currentSection.workOffset)));
+    }
+    writeBlock(mFormat.format(25)); // retract quill
     // retract to safe plane
     // retracted = true;
   }
@@ -445,7 +448,7 @@ function onSection() {
       writeComment(comment);
     }
     if (getSection(0).workOffset != 0) {
-        writeBlock(gFormat.format((54 + getSection(0).workOffset))); // G54->G59
+        writeBlock(gFormat.format((54 + currentSection.workOffset))); // G54->G59
     }
     if (tool.comment) {
       writeComment(tool.comment);
@@ -493,8 +496,8 @@ function onSection() {
     if (spindleSpeed < 1) {
       error(localize("Spindle speed out of range."));
     }
-    if (spindleSpeed > 99999) {
-      warning(localize("Spindle speed exceeds maximum value."));
+    if (spindleSpeed > 4200) {
+      error(localize("Spindle speed exceeds maximum value."));
     }
     writeBlock(
       sOutput.format(spindleSpeed), mFormat.format(tool.clockwise ? 3 : 4)
@@ -503,9 +506,9 @@ function onSection() {
 
   // wcs
   var workOffset = currentSection.workOffset;
-//  if (workOffset != 0) {
-//    warningOnce(localize("Work offset is not supported."), WARNING_WORK_OFFSET);
-//  }
+  if (workOffset == 0 && WARNING_WORK_OFFSET) {
+    error(localize("Work offset is recommended."));
+  }
   forceXYZ();
 
   if (machineConfiguration.isMultiAxisConfiguration()) { // use 5-axis indexing for multi-axis mode
@@ -602,7 +605,7 @@ function onCyclePoint(x, y, z) {
     // return to initial Z which is clearance plane and set absolute mode
 
     var F = cycle.feedrate;
-    // var P = !cycle.dwell ? 0 : clamp(1, cycle.dwell, 99999.999); // in seconds
+    var P = !cycle.dwell ? 0 : clamp(0.01, cycle.dwell, 327.0); // in seconds
 
     switch (cycleType) {
     case "drilling":
@@ -613,7 +616,8 @@ function onCyclePoint(x, y, z) {
       );
       break;
     case "counter-boring":
-      if (false) {
+      if (true) {
+        onDwell(P);
         writeBlock(
           gAbsIncModal.format(90), gCycleModal.format(82),
           getCommonCycle(x, y, z, cycle.clearance),
@@ -790,6 +794,9 @@ function onLinear(_x, _y, _z, feed) {
   var y = yOutput.format(_y);
   var z = zOutput.format(_z);
   var f = feedOutput.format(feed);
+  if (feed < 0.2) {
+    error(localize("feedrate out of range"));
+  }
   if (x || y || z) {
     if (pendingRadiusCompensation >= 0) {
       pendingRadiusCompensation = -1;
